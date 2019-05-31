@@ -207,6 +207,7 @@ fComp
 
 atomicTermFormula
 	: '(' predicate term* ')'
+	| '(' '=' term term ')'
 	;
 
 term : name | VARIABLE ;

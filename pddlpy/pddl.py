@@ -89,11 +89,23 @@ class Operator():
                          self.effect_pos, self.effect_neg)
 
 
+class Predicate:
+
+    def __init__(self, name):
+        self.name = name
+        self.variable_list = {}
+
+    def __str__(self):
+        templ = "Predicate Name: %s\n\tVariables: %s\n"
+        return templ % ( self.name, self.variable_list )
+
+
 class DomainListener(pddlListener):
     def __init__(self):
         self.typesdef = False
         self.objects = {}
         self.operators = {}
+        self.predicates = {}
         self.scopes = []
         self.negativescopes = []
 
@@ -118,6 +130,14 @@ class DomainListener(pddlListener):
     def exitTypesDef(self, ctx):
         self.typesdef = True
         self.scopes.pop()
+
+    def enterAtomicFormulaSkeleton(self, ctx):
+        pred_name = ctx.predicate().getText()
+        self.scopes.append(Predicate(pred_name))
+
+    def exitAtomicFormulaSkeleton(self, ctx):
+        pred = self.scopes.pop()
+        self.predicates[pred.name] = pred
 
     def enterTypedVariableList(self, ctx):
         # print("-> tvar")
@@ -322,8 +342,20 @@ class DomainProblem():
         """
         return self.domain.operators.keys()
 
+    def ground_predicate(self, pred_name):
+        """Returns an iterator of Predicate instances
+
+        returns -- An iterator of Operator instances
+        """
+        pred = self.domain.predicates[pred_name]
+        self._set_operator_groundspace(pred_name, pred.variable_list.items())
+        for ground in self._instantiate(pred_name):
+            grounded_pred = Predicate(pred_name)
+            grounded_pred.variable_list = dict(ground)
+            yield grounded_pred
+
     def ground_operator(self, op_name):
-        """Returns an interator of Operator instances. Each item of the iterator
+        """Returns an iterator of Operator instances. Each item of the iterator
         is a grounded instance.
 
         returns -- An iterator of Operator instances.
@@ -332,14 +364,40 @@ class DomainProblem():
         self._set_operator_groundspace( op_name, op.variable_list.items() )
         for ground in self._instantiate( op_name ):
             # print('grounded', ground)
-            st = dict(ground)
-            gop = Operator(op_name)
-            gop.variable_list = st
-            gop.precondition_pos = set( [ a.ground( st ) for a in op.precondition_pos ] )
-            gop.precondition_neg = set( [ a.ground( st ) for a in op.precondition_neg ] )
-            gop.effect_pos = set( [ a.ground( st ) for a in op.effect_pos ] )
-            gop.effect_neg = set( [ a.ground( st ) for a in op.effect_neg ] )
-            yield gop
+            gop = self._ground_operator_instance(op_name, ground)
+            if gop is not None:
+                yield gop
+
+    def _ground_operator_instance(self, op_name, ground):
+        op = self.domain.operators[op_name]
+        st = dict(ground)
+        gop = Operator(op_name)
+        gop.variable_list = st
+
+        gp_pos = []
+        for a in op.precondition_pos:
+            gp = a.ground(st)
+            if gp[0] == '=':
+                if gp[1] != gp[2]:
+                    return None
+            else:
+                gp_pos.append(gp)
+        gop.precondition_pos = set(gp_pos)
+
+        gp_neg = []
+        for a in op.precondition_neg:
+            gp = a.ground(st)
+            if gp[0] == '=':
+                if gp[1] == gp[2]:
+                    return None
+            else:
+                gp_neg.append(gp)
+        gop.precondition_neg = set(gp_neg)
+
+        gop.effect_pos = set([a.ground(st) for a in op.effect_pos])
+        gop.effect_neg = set([a.ground(st) for a in op.effect_neg])
+
+        return gop
 
     def _typesymbols(self, t):
         return ( k for k,v in self.worldobjects().items() if v == t )
